@@ -1,0 +1,11 @@
+python-telegram-bot[job-queue]==20.7
+firebase-admin==6.2.0
+google-play-scraper==2.0.0
+flask==3.0.0
+requests==2.31.0
+google-generativeai==0.3.2
+pytz==2023.3
+python-dotenv==1.0.0
+cryptography==41.0.7
+pillow==10.1.0
+gunicorn==21.2.0
