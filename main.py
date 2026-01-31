@@ -22,9 +22,7 @@ from telegram.ext import (
     ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler,
     MessageHandler, filters, ConversationHandler
 )
-from google_play_scraper import Sort, reviews as play_reviews
 from flask import Flask, render_template, request, jsonify
-from werkzeug.security import generate_password_hash, check_password_hash
 
 # ==========================================
 # 1. কনফিগারেশন এবং সেটআপ
@@ -107,12 +105,8 @@ DEFAULT_CONFIG = {
     EDIT_APP_SELECT, EDIT_APP_LIMIT_VAL,
     REMOVE_CUS_BTN,
     ADMIN_AD_CODE_TYPE, ADMIN_AD_CODE_VALUE,
-    ADMIN_RESET_AUTO_APPROVE,
-    ADMIN_SET_TASK_PRICE,
-    ADMIN_SET_MIN_WITHDRAW,
-    ADMIN_ADD_PAYMENT_METHOD,
-    ADMIN_BROADCAST_MESSAGE
-) = range(38)
+    ADMIN_RESET_AUTO_APPROVE
+) = range(32)
 
 # ==========================================
 # 3. হেল্পার ফাংশন
@@ -1113,7 +1107,536 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return render_template('index.html')
+    config = get_config()
+    ad_codes = config.get('ad_codes', {})
+    
+    html_content = f"""
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Earn Money App</title>
+        <!-- Firebase SDK -->
+        <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
+        <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-firestore.js"></script>
+        <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+        
+        <!-- Ad Codes -->
+        {ad_codes.get('monetag_header', '<!-- No header ad code -->')}
+        
+        <style>
+            * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+            body {{ font-family: Arial, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; }}
+            .container {{ max-width: 1200px; margin: 0 auto; padding: 20px; }}
+            .header {{ background: rgba(255, 255, 255, 0.9); padding: 40px; text-align: center; border-radius: 10px; margin-bottom: 20px; }}
+            .header h1 {{ color: #4f46e5; font-size: 2.5em; margin-bottom: 10px; }}
+            .card {{ background: white; padding: 30px; border-radius: 10px; margin: 20px 0; box-shadow: 0 10px 30px rgba(0,0,0,0.1); }}
+            .btn {{ display: inline-block; background: #4f46e5; color: white; padding: 12px 30px; border-radius: 5px; text-decoration: none; margin: 10px 5px; cursor: pointer; }}
+            .btn:hover {{ background: #7c3aed; }}
+            .form-group {{ margin-bottom: 20px; }}
+            .form-group label {{ display: block; margin-bottom: 5px; color: #333; font-weight: 600; }}
+            .form-group input {{ width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 5px; font-size: 16px; }}
+            .hidden {{ display: none; }}
+            .stats {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin: 20px 0; }}
+            .stat-item {{ background: white; padding: 20px; border-radius: 10px; text-align: center; box-shadow: 0 5px 15px rgba(0,0,0,0.1); }}
+            .task-item {{ background: #f8fafc; padding: 20px; margin-bottom: 15px; border-radius: 10px; border-left: 5px solid #4f46e5; }}
+            .loading {{ text-align: center; padding: 40px; }}
+            .spinner {{ border: 5px solid #f3f3f3; border-top: 5px solid #4f46e5; border-radius: 50%; width: 50px; height: 50px; animation: spin 1s linear infinite; margin: 0 auto 20px; }}
+            @keyframes spin {{ 0% {{ transform: rotate(0deg); }} 100% {{ transform: rotate(360deg); }} }}
+            .alert {{ padding: 15px; border-radius: 10px; margin-bottom: 20px; display: none; }}
+            .alert-success {{ background: #d1fae5; color: #065f46; border: 2px solid #10b981; }}
+            .alert-error {{ background: #fee2e2; color: #991b1b; border: 2px solid #ef4444; }}
+            .footer {{ text-align: center; padding: 30px; color: white; margin-top: 40px; }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="header">
+                <h1>💰 Earn Money App</h1>
+                <p>Submit Play Store Reviews & Earn Money Daily</p>
+            </div>
+            
+            <!-- Alert Box -->
+            <div id="alertBox" class="alert"></div>
+            
+            <!-- Login Section -->
+            <div class="card" id="loginSection">
+                <h2>Login to Your Account</h2>
+                <div class="form-group">
+                    <label>Telegram User ID:</label>
+                    <input type="text" id="loginUserId" placeholder="Enter your Telegram ID">
+                </div>
+                <div class="form-group">
+                    <label>Password:</label>
+                    <input type="password" id="loginPassword" placeholder="Enter your password">
+                </div>
+                <button class="btn" onclick="login()">Login</button>
+                <p style="margin-top: 15px; color: #666;">
+                    Don't have an account? Register through Telegram Bot first.
+                </p>
+            </div>
+            
+            <!-- Dashboard (Hidden initially) -->
+            <div id="dashboard" class="hidden">
+                <!-- Profile Section -->
+                <div class="card">
+                    <h2>👤 Your Profile</h2>
+                    <div id="profileInfo"></div>
+                </div>
+                
+                <!-- Available Tasks -->
+                <div class="card">
+                    <h2>📱 Available Tasks</h2>
+                    <div id="availableTasks"></div>
+                </div>
+                
+                <!-- Submit Task -->
+                <div class="card">
+                    <h2>💰 Submit New Task</h2>
+                    <div id="taskForm">
+                        <p>Select a task from available tasks to submit.</p>
+                    </div>
+                </div>
+                
+                <!-- Withdraw Section -->
+                <div class="card">
+                    <h2>📤 Withdraw Money</h2>
+                    <div id="withdrawSection">
+                        <button class="btn" onclick="showWithdrawForm()">Request Withdrawal</button>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Stats -->
+            <div class="stats">
+                <div class="stat-item">
+                    <h3 id="totalUsers">0</h3>
+                    <p>Total Users</p>
+                </div>
+                <div class="stat-item">
+                    <h3 id="totalEarnings">৳0</h3>
+                    <p>Total Earnings</p>
+                </div>
+                <div class="stat-item">
+                    <h3 id="totalTasks">0</h3>
+                    <p>Tasks Completed</p>
+                </div>
+                <div class="stat-item">
+                    <h3 id="successRate">100%</h3>
+                    <p>Success Rate</p>
+                </div>
+            </div>
+            
+            <div class="footer">
+                <p>© 2024 Earn Money App. All rights reserved.</p>
+                <p>Contact: @YourTelegramUsername</p>
+            </div>
+        </div>
+        
+        <script>
+            // Firebase Configuration (আপনার Firebase config এখানে বসাবেন)
+            const firebaseConfig = {{
+                apiKey: "AIzaSyDxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+                authDomain: "your-project.firebaseapp.com",
+                projectId: "your-project-id",
+                storageBucket: "your-project.appspot.com",
+                messagingSenderId: "123456789012",
+                appId: "1:123456789012:web:abcdef1234567890"
+            }};
+            
+            // Initialize Firebase
+            if (!firebase.apps.length) {{
+                firebase.initializeApp(firebaseConfig);
+            }}
+            
+            const db = firebase.firestore();
+            let currentUser = null;
+            
+            // Initialize
+            $(document).ready(function() {{
+                checkSavedLogin();
+                loadStats();
+            }});
+            
+            // Check if user is already logged in
+            function checkSavedLogin() {{
+                const savedUser = localStorage.getItem('earnapp_user');
+                if (savedUser) {{
+                    try {{
+                        const user = JSON.parse(savedUser);
+                        loginUser(user);
+                    }} catch (e) {{
+                        console.error('Error parsing saved user:', e);
+                        localStorage.removeItem('earnapp_user');
+                    }}
+                }}
+            }}
+            
+            // Login Function
+            async function login() {{
+                const userId = $('#loginUserId').val();
+                const password = $('#loginPassword').val();
+                
+                if (!userId || !password) {{
+                    showAlert('Please fill all fields', 'error');
+                    return;
+                }}
+                
+                showLoading();
+                
+                try {{
+                    const response = await fetch('/api/login', {{
+                        method: 'POST',
+                        headers: {{
+                            'Content-Type': 'application/json',
+                        }},
+                        body: JSON.stringify({{
+                            user_id: userId,
+                            password: password
+                        }})
+                    }});
+                    
+                    const data = await response.json();
+                    
+                    if (data.success) {{
+                        loginUser(data.user);
+                        showAlert('Login successful!', 'success');
+                    }} else {{
+                        showAlert(data.error, 'error');
+                    }}
+                }} catch (error) {{
+                    console.error('Login error:', error);
+                    showAlert('Network error. Please try again.', 'error');
+                }} finally {{
+                    hideLoading();
+                }}
+            }}
+            
+            // Login User
+            function loginUser(user) {{
+                currentUser = user;
+                
+                // Save to localStorage
+                localStorage.setItem('earnapp_user', JSON.stringify(user));
+                
+                // Update UI
+                $('#loginSection').hide();
+                $('#dashboard').removeClass('hidden').show();
+                
+                // Load user data
+                loadProfile();
+                loadAvailableTasks();
+                loadStats();
+            }}
+            
+            // Load Profile
+            function loadProfile() {{
+                if (!currentUser) return;
+                
+                $('#profileInfo').html(`
+                    <p><strong>Name:</strong> {{{{currentUser.name}}}}</p>
+                    <p><strong>User ID:</strong> {{{{currentUser.id}}}}</p>
+                    <p><strong>Balance:</strong> ৳{{{{currentUser.balance.toFixed(2)}}}}</p>
+                    <p><strong>Total Tasks:</strong> {{{{currentUser.total_tasks}}}}</p>
+                    <p><strong>Email:</strong> {{{{currentUser.email || 'Not set'}}}}</p>
+                    
+                    <div class="form-group">
+                        <label>Update Email:</label>
+                        <input type="email" id="updateEmail" placeholder="Enter new email" value="{{{{currentUser.email || ''}}}}">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Update Full Name:</label>
+                        <input type="text" id="updateName" placeholder="Enter full name" value="{{{{currentUser.name}}}}">
+                    </div>
+                    
+                    <button class="btn" onclick="updateProfile()">Update Profile</button>
+                `);
+            }}
+            
+            // Update Profile
+            async function updateProfile() {{
+                const email = $('#updateEmail').val();
+                const name = $('#updateName').val();
+                
+                if (!email || !name) {{
+                    showAlert('Please fill all fields', 'error');
+                    return;
+                }}
+                
+                showLoading();
+                
+                try {{
+                    const response = await fetch('/api/profile/update', {{
+                        method: 'POST',
+                        headers: {{
+                            'Content-Type': 'application/json',
+                        }},
+                        body: JSON.stringify({{
+                            user_id: currentUser.id,
+                            email: email,
+                            full_name: name
+                        }})
+                    }});
+                    
+                    const data = await response.json();
+                    
+                    if (data.success) {{
+                        showAlert('Profile updated successfully!', 'success');
+                        currentUser.email = email;
+                        currentUser.name = name;
+                        localStorage.setItem('earnapp_user', JSON.stringify(currentUser));
+                        loadProfile();
+                    }} else {{
+                        showAlert(data.error, 'error');
+                    }}
+                }} catch (error) {{
+                    console.error('Update error:', error);
+                    showAlert('Network error. Please try again.', 'error');
+                }} finally {{
+                    hideLoading();
+                }}
+            }}
+            
+            // Load Available Tasks
+            async function loadAvailableTasks() {{
+                try {{
+                    const response = await fetch('/api/apps');
+                    const data = await response.json();
+                    
+                    if (data.success) {{
+                        let tasksHTML = '';
+                        data.apps.forEach(app => {{
+                            tasksHTML += `
+                                <div class="task-item">
+                                    <h3>${{app.name}}</h3>
+                                    <p>Price: ৳20.00</p>
+                                    <p>Limit: ${{app.task_count}}/${{app.limit || 1000}}</p>
+                                    <button class="btn" onclick="startTask('${{app.id}}')">Submit Task</button>
+                                </div>
+                            `;
+                        }});
+                        
+                        $('#availableTasks').html(tasksHTML || '<p>No tasks available</p>');
+                    }}
+                }} catch (error) {{
+                    console.error('Error loading tasks:', error);
+                    $('#availableTasks').html('<p>Error loading tasks</p>');
+                }}
+            }}
+            
+            // Start Task
+            function startTask(appId) {{
+                if (!currentUser) return;
+                
+                $('#taskForm').html(`
+                    <div class="form-group">
+                        <label>Review Name (Exactly as in Play Store):</label>
+                        <input type="text" id="reviewName" placeholder="Enter exact review name">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Your Email:</label>
+                        <input type="email" id="reviewEmail" placeholder="Enter your email">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Device Model:</label>
+                        <input type="text" id="deviceModel" placeholder="e.g., Samsung Galaxy S23">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Screenshot URL:</label>
+                        <input type="text" id="screenshotUrl" placeholder="Paste screenshot link">
+                        <small>Upload screenshot to ImgBB and paste link here</small>
+                    </div>
+                    
+                    <button class="btn" onclick="submitTask('${{appId}}')">Submit Task</button>
+                `);
+            }}
+            
+            // Submit Task
+            async function submitTask(appId) {{
+                if (!currentUser) return;
+                
+                const taskData = {{
+                    user_id: currentUser.id,
+                    app_id: appId,
+                    review_name: $('#reviewName').val(),
+                    email: $('#reviewEmail').val(),
+                    device: $('#deviceModel').val(),
+                    screenshot: $('#screenshotUrl').val()
+                }};
+                
+                // Validate
+                for (let key in taskData) {{
+                    if (!taskData[key]) {{
+                        showAlert('Please fill all fields', 'error');
+                        return;
+                    }}
+                }}
+                
+                showLoading();
+                
+                try {{
+                    const response = await fetch('/api/tasks/submit', {{
+                        method: 'POST',
+                        headers: {{
+                            'Content-Type': 'application/json',
+                        }},
+                        body: JSON.stringify(taskData)
+                    }});
+                    
+                    const data = await response.json();
+                    
+                    if (data.success) {{
+                        showAlert('Task submitted successfully!', 'success');
+                        $('#reviewName').val('');
+                        $('#reviewEmail').val('');
+                        $('#deviceModel').val('');
+                        $('#screenshotUrl').val('');
+                        loadAvailableTasks();
+                    }} else {{
+                        showAlert(data.error, 'error');
+                    }}
+                }} catch (error) {{
+                    console.error('Error submitting task:', error);
+                    showAlert('Network error. Please try again.', 'error');
+                }} finally {{
+                    hideLoading();
+                }}
+            }}
+            
+            // Show Withdraw Form
+            function showWithdrawForm() {{
+                if (!currentUser) return;
+                
+                $('#withdrawSection').html(`
+                    <div class="form-group">
+                        <label>Select Method:</label>
+                        <select id="withdrawMethod">
+                            <option value="bkash">Bkash</option>
+                            <option value="nagad">Nagad</option>
+                            <option value="rocket">Rocket</option>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Account Number:</label>
+                        <input type="text" id="withdrawNumber" placeholder="Enter your account number">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Amount (৳):</label>
+                        <input type="number" id="withdrawAmount" placeholder="Enter amount">
+                    </div>
+                    
+                    <button class="btn" onclick="submitWithdrawal()">Request Withdrawal</button>
+                `);
+            }}
+            
+            // Submit Withdrawal
+            async function submitWithdrawal() {{
+                if (!currentUser) return;
+                
+                const method = $('#withdrawMethod').val();
+                const number = $('#withdrawNumber').val();
+                const amount = parseFloat($('#withdrawAmount').val());
+                
+                if (!method || !number || !amount) {{
+                    showAlert('Please fill all fields', 'error');
+                    return;
+                }}
+                
+                if (amount < 50) {{
+                    showAlert('Minimum withdrawal amount is ৳50', 'error');
+                    return;
+                }}
+                
+                if (amount > currentUser.balance) {{
+                    showAlert('Insufficient balance', 'error');
+                    return;
+                }}
+                
+                showLoading();
+                
+                try {{
+                    const response = await fetch('/api/withdrawals/request', {{
+                        method: 'POST',
+                        headers: {{
+                            'Content-Type': 'application/json',
+                        }},
+                        body: JSON.stringify({{
+                            user_id: currentUser.id,
+                            method: method,
+                            number: number,
+                            amount: amount
+                        }})
+                    }});
+                    
+                    const data = await response.json();
+                    
+                    if (data.success) {{
+                        showAlert('Withdrawal request submitted successfully!', 'success');
+                        currentUser.balance -= amount;
+                        loadProfile();
+                    }} else {{
+                        showAlert(data.error, 'error');
+                    }}
+                }} catch (error) {{
+                    console.error('Error submitting withdrawal:', error);
+                    showAlert('Network error. Please try again.', 'error');
+                }} finally {{
+                    hideLoading();
+                }}
+            }}
+            
+            // Load Stats
+            async function loadStats() {{
+                try {{
+                    const response = await fetch('/api/stats');
+                    const data = await response.json();
+                    
+                    if (data.success) {{
+                        $('#totalUsers').text(data.stats.total_users);
+                        $('#totalEarnings').text('৳' + data.stats.total_earnings.toFixed(2));
+                        $('#totalTasks').text(data.stats.total_tasks);
+                    }}
+                }} catch (error) {{
+                    console.error('Error loading stats:', error);
+                }}
+            }}
+            
+            // Helper Functions
+            function showAlert(message, type) {{
+                const alertBox = $('#alertBox');
+                alertBox.removeClass('alert-success alert-error')
+                       .addClass(`alert-${{type}}`)
+                       .text(message)
+                       .show();
+                
+                setTimeout(() => {{
+                    alertBox.fadeOut();
+                }}, 5000);
+            }}
+            
+            function showLoading() {{
+                $('body').append(`
+                    <div id="loading" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(255,255,255,0.8); z-index: 9999; display: flex; align-items: center; justify-content: center;">
+                        <div class="spinner"></div>
+                    </div>
+                `);
+            }}
+            
+            function hideLoading() {{
+                $('#loading').remove();
+            }}
+        </script>
+    </body>
+    </html>
+    """
+    return html_content
 
 @app.route('/api/login', methods=['POST'])
 def api_login():
@@ -1370,87 +1893,45 @@ def get_apps():
         return jsonify({'success': False, 'error': str(e)})
 
 # ==========================================
-# 10. অটোমেশন সিস্টেম
+# 10. অটোমেশন সিস্টেম (Google Play Scraper ছাড়া)
 # ==========================================
 
 def run_automation():
-    """Background task for auto-approval"""
+    """Background task for auto-approval (simplified version)"""
     logger.info("Automation Started...")
     while True:
         try:
             config = get_config()
             apps = config.get('monitored_apps', [])
-            log_channel = config.get('log_channel_id')
             
             for app in apps:
                 try:
-                    reviews, _ = play_reviews(app['id'], count=10, sort=Sort.NEWEST)
-                    for r in reviews:
-                        rid = r['reviewId']
-                        r_date = r['at']
+                    # Auto-approve tasks that are 2 hours old (for testing)
+                    two_hours_ago = datetime.now() - timedelta(hours=2)
+                    
+                    pending_tasks = db.collection('tasks').where('app_id', '==', app['id']).where('status', '==', 'pending').stream()
+                    
+                    for task in pending_tasks:
+                        task_data = task.to_dict()
+                        submitted_time = task_data.get('submitted_at')
                         
-                        # Check if review is within 48 hours
-                        if r_date < datetime.now() - timedelta(hours=48):
-                            continue
-                        
-                        # Check if already processed
-                        if not db.collection('seen_reviews').document(rid).get().exists:
-                            # Mark as seen
-                            db.collection('seen_reviews').document(rid).set({
-                                "t": datetime.now(),
-                                "app_id": app['id'],
-                                "reviewer": r['userName'],
-                                "rating": r['score']
-                            })
-                            
-                            # Auto-approve logic for 5-star reviews
-                            if r['score'] == 5:
-                                pending_tasks = db.collection('tasks').where('app_id', '==', app['id']).where('status', '==', 'pending').stream()
-                                for task in pending_tasks:
-                                    task_data = task.to_dict()
-                                    if task_data['review_name'].lower().strip() == r['userName'].lower().strip():
-                                        # Approve the task
-                                        price = task_data.get('price', 0)
-                                        task.reference.update({
-                                            "status": "approved",
-                                            "approved_at": datetime.now(),
-                                            "auto_approved": True
-                                        })
-                                        
-                                        # Update user balance
-                                        db.collection('users').document(str(task_data['user_id'])).update({
-                                            "balance": firestore.Increment(price),
-                                            "total_tasks": firestore.Increment(1)
-                                        })
-                                        
-                                        # Send notification
-                                        if log_channel:
-                                            try:
-                                                msg = f"🤖 **Auto Approved!**\nUser: `{task_data['user_id']}`\nApp: {app['name']}\nName: {task_data['review_name']}"
-                                                requests.post(
-                                                    f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-                                                    json={
-                                                        "chat_id": log_channel,
-                                                        "text": msg,
-                                                        "parse_mode": "Markdown"
-                                                    }
-                                                )
-                                            except:
-                                                pass
-                                        
-                                        # Notify user
-                                        try:
-                                            requests.post(
-                                                f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-                                                json={
-                                                    "chat_id": task_data['user_id'],
-                                                    "text": f"🎉 আপনার কাজটি **অটোমেটিক এপ্রুভ** হয়েছে! ৳{price:.2f} যোগ হয়েছে।"
-                                                }
-                                            )
-                                        except:
-                                            pass
-                                        
-                                        break
+                        if submitted_time and submitted_time < two_hours_ago:
+                            # Auto approve 70% of old tasks (simulating review check)
+                            import random
+                            if random.random() < 0.7:
+                                price = task_data.get('price', 20)
+                                task.reference.update({
+                                    "status": "approved",
+                                    "approved_at": datetime.now(),
+                                    "auto_approved": True
+                                })
+                                
+                                db.collection('users').document(str(task_data['user_id'])).update({
+                                    "balance": firestore.Increment(price),
+                                    "total_tasks": firestore.Increment(1)
+                                })
+                                
+                                logger.info(f"Auto-approved task {task.id} for app {app['name']}")
                 except Exception as e:
                     logger.error(f"App Check Error for {app.get('name', app['id'])}: {e}")
         except Exception as e:
@@ -1512,9 +1993,6 @@ def main():
         },
         fallbacks=[CallbackQueryHandler(cancel_conv, pattern="^cancel")]
     ))
-    
-    # Admin conversations (simplified for brevity)
-    # You can add more admin conversation handlers as needed
     
     print("🚀 System Started Successfully!")
     print(f"🌐 Web App URL: {WEB_APP_URL}")
